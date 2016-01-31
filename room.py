@@ -24,7 +24,7 @@ def main():
             print 'publishing message'
             pub_socket.send_json(room_messages.pop(0))
 
-        print 'sleeping .. Zzzzz'
+        # print 'sleeping .. Zzzzz'
         time.sleep(0.01)
 
 if __name__ == '__main__':

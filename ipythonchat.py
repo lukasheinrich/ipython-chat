@@ -10,7 +10,7 @@ def get_chat_window(my_nickname,socket_address):
         push_socket = context.socket(zmq.PUSH)
         push_socket.connect(socket_address)
 
-        push_socket.send_json({'nickname':my_nickname,'message':sender.value})
+        push_socket.send_json({'plain_message':{'nickname':my_nickname,'message':sender.value}})
         sender.value = ''
 
     console_container = widgets.VBox(visible=False)
@@ -21,7 +21,7 @@ def get_chat_window(my_nickname,socket_address):
     output_box.font_family = 'monospace'
     output_box.color = '#AAAAAA'
     output_box.background_color = 'black'
-    output_box.width = '800px'
+    output_box.width = '600px'
 
     input_box = widgets.Text()
     input_box.font_family = 'monospace'
@@ -48,17 +48,24 @@ def chat_room(kernel,output_box,socket_address):
         if subscribe_socket in zr:
             # print 'ok got message'
             message = subscribe_socket.recv_json()
-            output_box.value += '{}: {}\n'.format(message['nickname'],message['message'])
-            # print 'aqcuiring lock on shared state'
-            ipythonchat_state.shared_state_lock.acquire()
-            #ok now we no, nobody else is manipulating the shared_state object
-            ipythonchat_state.shared_state = {'last message':message['message']}
-            ipythonchat_state.shared_state_lock.release()
-            # print 'released lock, shared state is: ', ipythonchat_state.shared_state
-            kernel.do_one_iteration()
+            if 'plain_message' in message:
+                plain_message = message['plain_message']
+                output_box.value += '{}: {}\n'.format(plain_message['nickname'],plain_message['message'])
+            elif 'object_transfer' in message:
+                # print 'aqcuiring lock on shared state'
+                ipythonchat_state.shared_state_lock.acquire()
+                #ok now we no, nobody else is manipulating the shared_state object
+                sender = message['object_transfer']['sender']
+                import pickle
+                from_sender = pickle.loads(message['object_transfer']['payload'])
+                output_box.value += '<< got data object from {} {} >>\n'.format(sender,from_sender)
+                ipythonchat_state.shared_state = from_sender
+                ipythonchat_state.shared_state_lock.release()
+                # print 'released lock, shared state is: ', ipythonchat_state.shared_state
+                kernel.do_one_iteration()
         time.sleep(0.01)
-
-def copy_state():
+    
+def get_obj():
     ipythonchat_state.shared_state_lock.acquire()
     #ok now we no, nobody else is manipulating the shared_state object
     copied = dict(**ipythonchat_state.shared_state) if ipythonchat_state.shared_state else None
@@ -72,4 +79,13 @@ def start_chat(kernel,output_box,socket_addess):
 def bootstrap(nickname, write_to, read_from):
     output_box,console_container = get_chat_window(nickname,write_to)
     start_chat(get_ipython().kernel,output_box,read_from)
-    return console_container
+
+    def send_obj(obj):
+        import pickle
+        msg = {'object_transfer':{'payload':pickle.dumps(obj),'sender':nickname}}
+        context = zmq.Context()
+        push_socket = context.socket(zmq.PUSH)
+        push_socket.connect(write_to)
+        push_socket.send_json(msg)
+
+    return send_obj,console_container
